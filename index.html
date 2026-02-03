@@ -178,7 +178,7 @@
         boothOrder.forEach(b => { init[b] = Array(SLOTS_PER_BOOTH).fill(null); });
         return init;
       });
-      const [meetingTitle, setMeetingTitle] = useState('SDC Meeting');
+      const [meetingTitle, setMeetingTitle] = useState('Type Meeting Here');
       const [isFullscreen, setIsFullscreen] = useState(false);
 
       const handleSelect = (booth, idx, name) => {
