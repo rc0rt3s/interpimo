@@ -23,6 +23,9 @@
     .sync-saving { background: #fff3e0; color: #ef6c00; }
     .sync-error { background: #ffebee; color: #c62828; }
     .sync-loading { background: #e3f2fd; color: #1565c0; }
+    .booths-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .booths-row { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .booths-row { grid-template-columns: 1fr; } }
     @media print {
       body * { visibility: hidden; }
       .print-area, .print-area * { visibility: visible; }
@@ -101,7 +104,11 @@
       ],
     };
 
-    const boothOrder = ['Arabic', 'Chinese', 'Spanish', 'Russian', 'French', 'English'];
+    // Row 1: English, French, Spanish | Row 2: Russian, Chinese, Arabic
+    const boothRow1 = ['English', 'French', 'Spanish'];
+    const boothRow2 = ['Russian', 'Chinese', 'Arabic'];
+    const boothOrder = [...boothRow1, ...boothRow2];
+    
     const languages = ['English', 'French', 'Spanish', 'Arabic', 'Chinese', 'Russian'];
     const setLanguages = ['English', 'French', 'Spanish'];
     const imoBlue = '#5091CD';
@@ -148,6 +155,35 @@
         <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
       </svg>
     );
+
+    function BoothCard({ booth, selections, onSelect, getInterp }) {
+      const c = boothColors[booth];
+      const interps = interpretersData[booth] || [];
+      const sel = selections[booth].filter(Boolean).length;
+      return (
+        <div className="booth-card" style={{ background: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+          <div style={{ background: c.bg, color: c.text, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.03em', fontSize: '0.9rem' }}>{booth}</span>
+            <span style={{ background: 'rgba(255,255,255,0.2)', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem' }}>{sel}/{SLOTS_PER_BOOTH}</span>
+          </div>
+          <div style={{ padding: '10px' }}>
+            {Array(SLOTS_PER_BOOTH).fill(null).map((_, idx) => {
+              const s = selections[booth][idx];
+              const interp = s ? getInterp(booth, s) : null;
+              return (
+                <div key={idx} style={{ marginBottom: '6px' }}>
+                  <select value={s || ''} onChange={e => onSelect(booth, idx, e.target.value)} style={{ width: '100%', padding: '7px 8px', border: '1px solid #e0e0e0', borderRadius: '5px', fontSize: '0.8rem', background: s ? '#f8f9fa' : '#fff' }}>
+                    <option value="">— Select —</option>
+                    {interps.map(i => <option key={i.name} value={i.name}>{i.name}</option>)}
+                  </select>
+                  {interp && <div style={{ fontSize: '0.7rem', color: '#888', padding: '2px 6px' }}>Sets: {interp.sets}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
 
     function StatementsTable({ calc, meetingTitle, isFullscreen, onToggleFullscreen, onPrint }) {
       return (
@@ -199,10 +235,9 @@
       const [selections, setSelections] = useState(defaultSelections);
       const [meetingTitle, setMeetingTitle] = useState('SDC Meeting');
       const [isFullscreen, setIsFullscreen] = useState(false);
-      const [syncStatus, setSyncStatus] = useState('loading'); // loading, saved, saving, error
+      const [syncStatus, setSyncStatus] = useState('loading');
       const [lastSaved, setLastSaved] = useState(null);
 
-      // Load data from JSONBin on mount
       useEffect(() => {
         loadData();
       }, []);
@@ -211,9 +246,7 @@
         setSyncStatus('loading');
         try {
           const response = await fetch(JSONBIN_URL + '/latest', {
-            headers: {
-              'X-Master-Key': JSONBIN_API_KEY
-            }
+            headers: { 'X-Master-Key': JSONBIN_API_KEY }
           });
           if (response.ok) {
             const data = await response.json();
@@ -232,7 +265,6 @@
         }
       };
 
-      // Save data to JSONBin
       const saveData = useCallback(async (newSelections, newTitle) => {
         setSyncStatus('saving');
         try {
@@ -259,7 +291,6 @@
         }
       }, []);
 
-      // Debounced save - waits 1 second after last change
       useEffect(() => {
         const timer = setTimeout(() => {
           if (syncStatus !== 'loading') {
@@ -306,13 +337,8 @@
 
       const count = Object.values(selections).flat().filter(Boolean).length;
 
-      const handlePrint = () => {
-        window.print();
-      };
-
-      const toggleFullscreen = () => {
-        setIsFullscreen(!isFullscreen);
-      };
+      const handlePrint = () => { window.print(); };
+      const toggleFullscreen = () => { setIsFullscreen(!isFullscreen); };
 
       const getSyncStatusDisplay = () => {
         switch(syncStatus) {
@@ -326,17 +352,10 @@
 
       const statusDisplay = getSyncStatusDisplay();
 
-      // Fullscreen overlay
       if (isFullscreen) {
         return (
           <div className="fullscreen-overlay">
-            <StatementsTable 
-              calc={calc} 
-              meetingTitle={meetingTitle}
-              isFullscreen={true} 
-              onToggleFullscreen={toggleFullscreen}
-              onPrint={handlePrint}
-            />
+            <StatementsTable calc={calc} meetingTitle={meetingTitle} isFullscreen={true} onToggleFullscreen={toggleFullscreen} onPrint={handlePrint} />
           </div>
         );
       }
@@ -362,50 +381,24 @@
             </div>
           </div>
 
-          {/* Booths Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-            {boothOrder.map(booth => {
-              const c = boothColors[booth];
-              const interps = interpretersData[booth] || [];
-              const sel = selections[booth].filter(Boolean).length;
-              return (
-                <div key={booth} className="booth-card" style={{ background: '#fff', borderRadius: '10px', overflow: 'hidden', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
-                  <div style={{ background: c.bg, color: c.text, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.03em', fontSize: '0.9rem' }}>{booth}</span>
-                    <span style={{ background: 'rgba(255,255,255,0.2)', padding: '2px 8px', borderRadius: '10px', fontSize: '0.75rem' }}>{sel}/{SLOTS_PER_BOOTH}</span>
-                  </div>
-                  <div style={{ padding: '10px' }}>
-                    {Array(SLOTS_PER_BOOTH).fill(null).map((_, idx) => {
-                      const s = selections[booth][idx];
-                      const interp = s ? getInterp(booth, s) : null;
-                      return (
-                        <div key={idx} style={{ marginBottom: '6px' }}>
-                          <select value={s || ''} onChange={e => handleSelect(booth, idx, e.target.value)} style={{ width: '100%', padding: '7px 8px', border: '1px solid #e0e0e0', borderRadius: '5px', fontSize: '0.8rem', background: s ? '#f8f9fa' : '#fff' }}>
-                            <option value="">— Select —</option>
-                            {interps.map(i => <option key={i.name} value={i.name}>{i.name}</option>)}
-                          </select>
-                          {interp && <div style={{ fontSize: '0.7rem', color: '#888', padding: '2px 6px' }}>Sets: {interp.sets}</div>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+          {/* Booths - Row 1: English, French, Spanish */}
+          <div className="booths-row">
+            {boothRow1.map(booth => (
+              <BoothCard key={booth} booth={booth} selections={selections} onSelect={handleSelect} getInterp={getInterp} />
+            ))}
+          </div>
+
+          {/* Booths - Row 2: Russian, Chinese, Arabic */}
+          <div className="booths-row" style={{ marginBottom: '24px' }}>
+            {boothRow2.map(booth => (
+              <BoothCard key={booth} booth={booth} selections={selections} onSelect={handleSelect} getInterp={getInterp} />
+            ))}
           </div>
 
           {/* Summary Section */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
-            {/* Statements Table */}
-            <StatementsTable 
-              calc={calc} 
-              meetingTitle={meetingTitle}
-              isFullscreen={false} 
-              onToggleFullscreen={toggleFullscreen}
-              onPrint={handlePrint}
-            />
+            <StatementsTable calc={calc} meetingTitle={meetingTitle} isFullscreen={false} onToggleFullscreen={toggleFullscreen} onPrint={handlePrint} />
 
-            {/* Sets Summary */}
             <div style={{ background: '#fff', borderRadius: '10px', padding: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
               <h3 style={{ margin: '0 0 12px', color: imoBlue, fontSize: '1rem' }}>🎧 Sets Required</h3>
               <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
@@ -424,7 +417,6 @@
             </div>
           </div>
 
-          {/* Footer */}
           <footer style={{ textAlign: 'center', padding: '16px', marginTop: '20px', color: '#999', fontSize: '0.75rem' }}>
             Documentation Services • IMO Interpreter Assignment Tool
           </footer>
