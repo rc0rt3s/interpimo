@@ -298,16 +298,69 @@
       );
     }
 
-    function PdfModal({ pdfDataUrl, fileName, onClose }) {
+    function RotaTableModal({ rotaData, onClose }) {
+      if (!rotaData) return null;
+      const { meetingCode, days, interpreters } = rotaData;
+      const byBooth = {};
+      boothOrder.forEach(b => { byBooth[b] = []; });
+      interpreters.forEach(i => { if (byBooth[i.booth]) byBooth[i.booth].push(i); });
+
+      const markStyle = (mark) => {
+        if (mark === '✓') return { color: '#2e7d32', fontWeight: '700' };
+        if (mark === 'n/a') return { color: '#bbb', fontStyle: 'italic', fontSize: '0.75em' };
+        if (mark === '(Spare)') return { color: '#ef6c00', fontSize: '0.7em' };
+        return { color: '#ddd' };
+      };
+
       return (
         <div className="modal-overlay" onClick={onClose}>
           <div className="pdf-modal-content" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <h2 style={{ color: imoBlue, margin: 0, fontSize: '1.1rem' }}>📄 {fileName || 'Interpreters\' Rota'}</h2>
+              <h2 style={{ color: imoBlue, margin: 0, fontSize: '1.1rem' }}>📄 Interpreters' Rota {meetingCode ? `— ${meetingCode}` : ''}</h2>
               <button className="close-btn" onClick={onClose}>Close</button>
             </div>
-            <div style={{ flex: 1, borderRadius: '8px', overflow: 'hidden', border: '1px solid #eee' }}>
-              <embed src={pdfDataUrl} type="application/pdf" style={{ width: '100%', height: '100%' }} />
+            <p style={{ margin: '0 0 12px', color: '#888', fontSize: '0.75rem' }}>Reconstructed from the uploaded rota PDF — not the original file, but the same schedule data.</p>
+            <div style={{ flex: 1, overflow: 'auto', border: '1px solid #eee', borderRadius: '8px' }}>
+              <table style={{ borderCollapse: 'collapse', fontSize: '0.75rem', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ position: 'sticky', left: 0, background: '#fafafa', padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #eee', borderRight: '1px solid #eee', minWidth: '140px' }}>Interpreter</th>
+                    {days.map(d => (
+                      <th key={dayKey(d)} colSpan={2} style={{ padding: '6px 4px', textAlign: 'center', borderBottom: '1px solid #eee', borderLeft: '1px solid #f0f0f0', color: '#666' }}>
+                        {d.name.slice(0,3)} {String(d.day).padStart(2,'0')}
+                      </th>
+                    ))}
+                  </tr>
+                  <tr>
+                    <th style={{ position: 'sticky', left: 0, background: '#fafafa', borderRight: '1px solid #eee' }}></th>
+                    {days.map(d => (
+                      <React.Fragment key={dayKey(d)}>
+                        <th style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#999', borderLeft: '1px solid #f0f0f0' }}>AM</th>
+                        <th style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#999' }}>PM</th>
+                      </React.Fragment>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {boothOrder.map(booth => byBooth[booth].map((interp, idx) => (
+                    <tr key={booth + interp.name}>
+                      <td style={{ position: 'sticky', left: 0, background: '#fff', padding: '5px 10px', borderRight: '1px solid #eee', borderBottom: '1px solid #f5f5f5', whiteSpace: 'nowrap' }}>
+                        {idx === 0 && <span style={{ display: 'block', fontSize: '0.65rem', fontWeight: '700', color: boothColors[booth].bg, textTransform: 'uppercase' }}>{booth}</span>}
+                        {interp.name}
+                      </td>
+                      {days.map(d => {
+                        const mark = interp.marks[dayKey(d)] || { AM: '', PM: '' };
+                        return (
+                          <React.Fragment key={dayKey(d)}>
+                            <td style={{ textAlign: 'center', padding: '5px 4px', borderBottom: '1px solid #f5f5f5', borderLeft: '1px solid #f8f8f8', ...markStyle(mark.AM) }}>{mark.AM || '–'}</td>
+                            <td style={{ textAlign: 'center', padding: '5px 4px', borderBottom: '1px solid #f5f5f5', ...markStyle(mark.PM) }}>{mark.PM || '–'}</td>
+                          </React.Fragment>
+                        );
+                      })}
+                    </tr>
+                  )))}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -348,25 +401,44 @@
       return bestScore >= 2 ? best : null;
     };
 
-    // Key used to compare/store which day a rota was last applied for, e.g. "7-July-2026"
+    // Key used to identify a specific day, e.g. "7-July-2026"
     const dayKey = (d) => d ? `${d.day}-${d.month}-${d.year}` : '';
     const todayKey = () => {
       const t = new Date();
       return `${t.getDate()}-${t.toLocaleString('en-US', { month: 'long' })}-${t.getFullYear()}`;
     };
 
-    // Reconstructs a File object from a stored base64 data URL (so a previously
-    // uploaded rota can be silently re-parsed, e.g. on a new day, without re-uploading)
-    async function dataUrlToFile(dataUrl, filename) {
-      const res = await fetch(dataUrl);
-      const blob = await res.blob();
-      return new File([blob], filename || 'rota.pdf', { type: 'application/pdf' });
-    }
+    // Pure helpers that operate on already-parsed rotaData (no PDF needed) -----
+    const rotaDateObj = (d) => new Date(`${d.month} ${d.day}, ${d.year} 00:00:00`);
+
+    const rotaFindDayForDate = (rotaData, dateObj) => {
+      if (!rotaData || !rotaData.days.length) return null;
+      return rotaData.days.find(d => rotaDateObj(d).getTime() === dateObj.getTime()) || null;
+    };
+
+    const rotaGetWorkingNames = (rotaData, day) => {
+      if (!rotaData || !day) return [];
+      const dKey = dayKey(day);
+      const names = [];
+      rotaData.interpreters.forEach(interp => {
+        const mark = interp.marks[dKey];
+        if (mark && (mark.AM === '✓' || mark.PM === '✓')) names.push({ booth: interp.booth, name: interp.name });
+      });
+      return names;
+    };
+
+    const rotaIsExpired = (rotaData, todayDateObj) => {
+      if (!rotaData || !rotaData.days.length) return false;
+      const last = rotaData.days[rotaData.days.length - 1]; // days are stored chronologically ascending
+      return todayDateObj.getTime() > rotaDateObj(last).getTime();
+    };
 
     // Parses the rota PDF using pdf.js. The PDF's grid is transposed: each INTERPRETER
     // is a column (identified by a rotated "LASTNAME, Firstname" label near the bottom
-    // of the page), and each ROW is a specific Day+Session (AM/PM), with a checkmark
-    // at the intersection meaning that interpreter is working that session.
+    // of the page), and each ROW is a specific Day+Session (AM/PM), with a mark
+    // (✓ / n/a / (Spare) / blank) at the intersection. Returns a compact JSON summary
+    // of the whole rota (meeting code, days, and every interpreter's per-day marks) -
+    // small enough to sync via JSONBin, so the original PDF never needs to be stored.
     async function parseRotaPdf(file) {
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -412,8 +484,8 @@
         const m = line.match(dayNameRegex);
         if (m) dayRows.push({ y: r.y, name: m[1], day: parseInt(m[2], 10), month: m[3], year: parseInt(m[4], 10) });
       });
-      // Attach a comparable Date (midnight) to each day for range/expiry checks
-      dayRows.forEach(d => { d.dateObj = new Date(`${d.month} ${d.day}, ${d.year} 00:00:00`); });
+      dayRows.forEach(d => { d.dateObj = rotaDateObj(d); });
+      dayRows.sort((a, b) => a.dateObj - b.dateObj); // chronological ascending
 
       // Session rows (each row has exactly one "AM" or "PM" label)
       const sessionRows = [];
@@ -434,51 +506,35 @@
         }
       });
 
-      // Build attendance for one specific day: for each ✓ in a session row matching
-      // that day, find the nearest interpreter column and resolve it to a booth
-      const getWorkingNamesForDay = (day) => {
-        if (!day) return [];
-        const workingKeys = new Set();
-        const workingRows = [];
+      // For every interpreter column, record the mark (✓ / n/a / (Spare) / blank)
+      // at every day+session row, by finding the nearest text item to that column's x
+      const excludedLabels = (str) => str.trim() === 'AM' || str.trim() === 'PM' || dayNameRegex.test(str);
+      const interpreters = [];
+      nameColumns.forEach(nc => {
+        const match = findInterpreterMatch(nc.lastName, nc.firstName);
+        if (!match) return;
+        const marks = {};
+        dayRows.forEach(d => { marks[dayKey(d)] = { AM: '', PM: '' }; });
         sessionRows.forEach(sr => {
           if (!sr.day) return;
-          if (sr.day.day !== day.day || sr.day.month !== day.month || sr.day.year !== day.year) return;
+          let nearestItem = null, best = Infinity;
           sr.row.items.forEach(it => {
-            if (it.str.trim() !== '✓') return;
-            let nearestCol = null, best = Infinity;
-            nameColumns.forEach(nc => { const diff = Math.abs(nc.x - it.x); if (diff < best) { best = diff; nearestCol = nc; } });
-            if (nearestCol && best < 8) {
-              const key = nearestCol.lastName + '|' + nearestCol.firstName;
-              if (!workingKeys.has(key)) { workingKeys.add(key); workingRows.push(nearestCol); }
-            }
+            if (excludedLabels(it.str)) return;
+            const diff = Math.abs(it.x - nc.x);
+            if (diff < best) { best = diff; nearestItem = it; }
           });
+          if (nearestItem && best < 8) {
+            const dKey = dayKey(sr.day);
+            if (marks[dKey]) marks[dKey][sr.session] = nearestItem.str.trim();
+          }
         });
-        const names = [];
-        workingRows.forEach(row => {
-          const match = findInterpreterMatch(row.lastName, row.firstName);
-          if (match) names.push(match);
-        });
-        return names;
-      };
-
-      // Determine key days: today's exact match, the earliest day (for a fresh
-      // upload ahead of the meeting), and the latest day (to detect expiry)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const todayMonthName = today.toLocaleString('en-US', { month: 'long' });
-      const todayMatch = dayRows.find(d => d.day === today.getDate() && d.month === todayMonthName && d.year === today.getFullYear()) || null;
-      const earliestDay = dayRows.reduce((min, d) => (!min || d.dateObj < min.dateObj) ? d : min, null);
-      const latestDay = dayRows.reduce((max, d) => (!max || d.dateObj > max.dateObj) ? d : max, null);
-      const isExpired = latestDay ? today.getTime() > latestDay.dateObj.getTime() : false;
+        interpreters.push({ booth: match.booth, name: match.name, rawName: `${nc.lastName}, ${nc.firstName}`, marks });
+      });
 
       return {
         meetingCode,
-        todayMatch,
-        earliestDay,
-        latestDay,
-        isExpired,
-        workingNamesForToday: todayMatch ? getWorkingNamesForDay(todayMatch) : [],
-        workingNamesForEarliest: earliestDay ? getWorkingNamesForDay(earliestDay) : [],
+        days: dayRows.map(d => ({ name: d.name, day: d.day, month: d.month, year: d.year })),
+        interpreters,
       };
     }
 
@@ -489,32 +545,20 @@
       const [syncStatus, setSyncStatus] = useState('loading');
       const [lastSaved, setLastSaved] = useState(null);
       const [showEmailModal, setShowEmailModal] = useState(false);
-      const [pdfDataUrl, setPdfDataUrl] = useState(null);
-      const [pdfFileName, setPdfFileName] = useState('');
+      const [rotaData, setRotaData] = useState(null);
+      const [rotaAppliedDayKey, setRotaAppliedDayKey] = useState('');
       const [showPdfModal, setShowPdfModal] = useState(false);
       const [isParsingRota, setIsParsingRota] = useState(false);
       const fileInputRef = React.useRef(null);
 
       useEffect(() => {
-        loadData();
         (async () => {
-          try {
-            const storedPdf = localStorage.getItem('rotaPdfDataUrl');
-            const storedName = localStorage.getItem('rotaPdfFileName');
-            if (!storedPdf) return;
-            setPdfDataUrl(storedPdf);
-            setPdfFileName(storedName || '');
-
-            // If we've moved to a new day since this rota was last applied, silently
-            // re-parse it and refresh the selections/title for today - no re-upload needed.
-            const lastApplied = localStorage.getItem('rotaLastAppliedDay');
-            if (lastApplied === todayKey()) return;
-
-            const file = await dataUrlToFile(storedPdf, storedName);
-            const parseResult = await parseRotaPdf(file);
-            applyRotaResult(parseResult, { isManualUpload: false });
-          } catch (err) {
-            console.error('Could not auto-refresh stored rota PDF:', err);
+          const record = await loadData();
+          // If the day has changed since this rota was last applied, silently refresh
+          // the selections/title for today from the already-parsed rota data -
+          // no re-upload needed, and no PDF re-parsing either.
+          if (record && record.rotaData && record.rotaAppliedDayKey !== todayKey()) {
+            applyRotaFromData(record.rotaData, { isManualUpload: false });
           }
         })();
       }, []);
@@ -530,9 +574,12 @@
             if (data.record) {
               if (data.record.selections) setSelections(data.record.selections);
               if (data.record.meetingTitle) setMeetingTitle(data.record.meetingTitle);
+              if (data.record.rotaData) setRotaData(data.record.rotaData);
+              if (data.record.rotaAppliedDayKey) setRotaAppliedDayKey(data.record.rotaAppliedDayKey);
             }
             setSyncStatus('saved');
             setLastSaved(new Date());
+            return data.record;
           } else {
             setSyncStatus('error');
           }
@@ -540,9 +587,10 @@
           console.error('Load error:', err);
           setSyncStatus('error');
         }
+        return null;
       };
 
-      const saveData = useCallback(async (newSelections, newTitle) => {
+      const saveData = useCallback(async (newSelections, newTitle, newRotaData, newRotaAppliedDayKey) => {
         setSyncStatus('saving');
         try {
           const response = await fetch(JSONBIN_URL, {
@@ -553,7 +601,9 @@
             },
             body: JSON.stringify({
               meetingTitle: newTitle,
-              selections: newSelections
+              selections: newSelections,
+              rotaData: newRotaData,
+              rotaAppliedDayKey: newRotaAppliedDayKey
             })
           });
           if (response.ok) {
@@ -571,11 +621,11 @@
       useEffect(() => {
         const timer = setTimeout(() => {
           if (syncStatus !== 'loading') {
-            saveData(selections, meetingTitle);
+            saveData(selections, meetingTitle, rotaData, rotaAppliedDayKey);
           }
         }, 1000);
         return () => clearTimeout(timer);
-      }, [selections, meetingTitle]);
+      }, [selections, meetingTitle, rotaData, rotaAppliedDayKey]);
 
       const handleSelect = (booth, idx, name) => {
         setSelections(prev => {
@@ -588,13 +638,16 @@
 
       const getInterp = (booth, name) => interpretersData[booth]?.find(i => i.name === name);
 
-      // Applies a parseRotaPdf() result to selections + meeting title.
+      // Applies already-parsed rotaData to selections + meeting title.
       // - If the meeting's last day has passed, shows "NEW ROTA NEEDED" and clears selections.
       // - If today falls within the rota, selects today's working interpreters.
       // - Otherwise (rota uploaded ahead of the meeting), a manual upload defaults to
       //   the meeting's first day; an automatic daily refresh leaves things untouched.
-      const applyRotaResult = (parseResult, { isManualUpload } = {}) => {
-        const { meetingCode, todayMatch, earliestDay, isExpired, workingNamesForToday, workingNamesForEarliest } = parseResult;
+      const applyRotaFromData = (data, { isManualUpload } = {}) => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayMatch = rotaFindDayForDate(data, today);
+        const expired = rotaIsExpired(data, today);
 
         const fillSelections = (workingNames) => {
           setSelections(prev => {
@@ -612,25 +665,28 @@
           });
         };
 
-        if (isExpired) {
+        if (expired) {
           fillSelections([]);
           setMeetingTitle('NEW ROTA NEEDED');
-          try { localStorage.setItem('rotaLastAppliedDay', todayKey()); } catch (err) {}
+          setRotaAppliedDayKey(todayKey());
           return { status: 'expired', count: 0 };
         }
 
         if (todayMatch) {
-          fillSelections(workingNamesForToday);
-          setMeetingTitle([meetingCode, todayMatch.name.toUpperCase()].filter(Boolean).join(' · '));
-          try { localStorage.setItem('rotaLastAppliedDay', dayKey(todayMatch)); } catch (err) {}
-          return { status: 'applied', count: workingNamesForToday.length };
+          const working = rotaGetWorkingNames(data, todayMatch);
+          fillSelections(working);
+          setMeetingTitle([data.meetingCode, todayMatch.name.toUpperCase()].filter(Boolean).join(' · '));
+          setRotaAppliedDayKey(dayKey(todayMatch));
+          return { status: 'applied', count: working.length };
         }
 
-        if (isManualUpload && earliestDay) {
-          fillSelections(workingNamesForEarliest);
-          setMeetingTitle([meetingCode, earliestDay.name.toUpperCase()].filter(Boolean).join(' · '));
-          try { localStorage.setItem('rotaLastAppliedDay', dayKey(earliestDay)); } catch (err) {}
-          return { status: 'applied', count: workingNamesForEarliest.length };
+        if (isManualUpload && data.days.length) {
+          const firstDay = data.days[0];
+          const working = rotaGetWorkingNames(data, firstDay);
+          fillSelections(working);
+          setMeetingTitle([data.meetingCode, firstDay.name.toUpperCase()].filter(Boolean).join(' · '));
+          setRotaAppliedDayKey(dayKey(firstDay));
+          return { status: 'applied', count: working.length };
         }
 
         return { status: 'no-change', count: 0 };
@@ -641,25 +697,9 @@
         if (!file) return;
         setIsParsingRota(true);
         try {
-          // Read as data URL for storage/viewing
-          const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          setPdfDataUrl(dataUrl);
-          setPdfFileName(file.name);
-          try {
-            localStorage.setItem('rotaPdfDataUrl', dataUrl);
-            localStorage.setItem('rotaPdfFileName', file.name);
-          } catch (err) {
-            console.error('Could not store rota PDF locally (file may be too large):', err);
-          }
-
-          // Parse the PDF to auto-select interpreters
-          const parseResult = await parseRotaPdf(file);
-          const { status, count } = applyRotaResult(parseResult, { isManualUpload: true });
+          const parsed = await parseRotaPdf(file);
+          setRotaData(parsed);
+          const { status, count } = applyRotaFromData(parsed, { isManualUpload: true });
 
           if (status === 'expired') {
             alert('This rota\'s last day has already passed. The meeting title now shows "NEW ROTA NEEDED" until a current rota is uploaded.');
@@ -668,7 +708,7 @@
           }
         } catch (err) {
           console.error('Rota parsing error:', err);
-          alert('Could not parse the rota PDF automatically, but it has been saved so you can view it with "See pdf ROTA". Please select interpreters manually.');
+          alert('Could not parse the rota PDF. Please check the file and try again, or select interpreters manually.');
         } finally {
           setIsParsingRota(false);
           e.target.value = '';
@@ -763,7 +803,7 @@
               <button className="header-btn-outline" onClick={() => fileInputRef.current?.click()} disabled={isParsingRota}>
                 {isParsingRota ? '⟳ Parsing...' : '📤 Upload ROTA'}
               </button>
-              <button className="header-btn-outline" onClick={() => setShowPdfModal(true)} disabled={!pdfDataUrl}>
+              <button className="header-btn-outline" onClick={() => setShowPdfModal(true)} disabled={!rotaData}>
                 📄 See pdf ROTA
               </button>
             </div>
@@ -826,8 +866,8 @@
           )}
 
           {/* Pdf Rota Modal */}
-          {showPdfModal && pdfDataUrl && (
-            <PdfModal pdfDataUrl={pdfDataUrl} fileName={pdfFileName} onClose={() => setShowPdfModal(false)} />
+          {showPdfModal && rotaData && (
+            <RotaTableModal rotaData={rotaData} onClose={() => setShowPdfModal(false)} />
           )}
         </div>
       );
