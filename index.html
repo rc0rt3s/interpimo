@@ -208,7 +208,7 @@
         <div className="modal-overlay" onClick={onClose}>
           <div className="modal-content" onClick={e => e.stopPropagation()}>
             <h2 style={{ color: imoBlue, marginBottom: '8px' }}>📧 Interpreters' Email List</h2>
-            <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '12px' }}>{emails.length} interpreter{emails.length !== 1 ? 's' : ''} selected</p>
+            <p style={{ color: '#666', fontSize: '0.9rem', marginBottom: '12px' }}>{emails.length} interpreter{emails.length !== 1 ? 's' : ''} working this meeting</p>
             <div className="email-box">{emailString || 'No interpreters selected'}</div>
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button className="copy-btn" onClick={handleCopy}>
@@ -614,7 +614,7 @@
 
     function App() {
       const [selections, setSelections] = useState(defaultSelections);
-      const [meetingTitle, setMeetingTitle] = useState('SDC Meeting');
+      const [meetingTitle, setMeetingTitle] = useState('NEW ROTA NEEDED');
       const [isFullscreen, setIsFullscreen] = useState(false);
       const [syncStatus, setSyncStatus] = useState('loading');
       const [lastSaved, setLastSaved] = useState(null);
@@ -646,10 +646,16 @@
           if (response.ok) {
             const data = await response.json();
             if (data.record) {
-              if (data.record.selections) setSelections(data.record.selections);
-              if (data.record.meetingTitle) setMeetingTitle(data.record.meetingTitle);
-              if (data.record.rotaData) setRotaData(data.record.rotaData);
-              if (data.record.rotaAppliedDayKey) setRotaAppliedDayKey(data.record.rotaAppliedDayKey);
+              if (data.record.rotaData) {
+                if (data.record.selections) setSelections(data.record.selections);
+                if (data.record.meetingTitle) setMeetingTitle(data.record.meetingTitle);
+                setRotaData(data.record.rotaData);
+                if (data.record.rotaAppliedDayKey) setRotaAppliedDayKey(data.record.rotaAppliedDayKey);
+              } else {
+                // No rota has ever been uploaded - show a clear placeholder state
+                setSelections(defaultSelections());
+                setMeetingTitle('NEW ROTA NEEDED');
+              }
             }
             setSyncStatus('saved');
             setLastSaved(new Date());
@@ -801,22 +807,63 @@
                 languages.forEach(l => {
                   if (interp.statement?.toLowerCase().includes(l.toLowerCase())) stmtByBooth[booth][l]++;
                 });
-                setLanguages.forEach(l => {
-                  if (interp.sets?.toLowerCase().includes(l.toLowerCase())) setsByLang[l]++;
-                });
               }
             }
           });
         });
+
+        // Sets Required reflects EVERY interpreter working anywhere in the whole
+        // meeting (across all days in the rota), not just today's booth selections.
+        if (rotaData && rotaData.interpreters && rotaData.interpreters.length) {
+          const countedKeys = new Set();
+          rotaData.interpreters.forEach(interp => {
+            const worksAnyDay = Object.values(interp.marks).some(m => m.AM === '✓' || m.PM === '✓');
+            if (!worksAnyDay) return;
+            const key = interp.booth + '|' + interp.name;
+            if (countedKeys.has(key)) return;
+            countedKeys.add(key);
+            const full = getInterp(interp.booth, interp.name);
+            if (full) {
+              setLanguages.forEach(l => { if (full.sets?.toLowerCase().includes(l.toLowerCase())) setsByLang[l]++; });
+            }
+          });
+        } else {
+          // No rota uploaded yet - fall back to today's selections
+          boothOrder.forEach(booth => {
+            selections[booth]?.forEach(name => {
+              if (name) {
+                const interp = getInterp(booth, name);
+                if (interp) setLanguages.forEach(l => { if (interp.sets?.toLowerCase().includes(l.toLowerCase())) setsByLang[l]++; });
+              }
+            });
+          });
+        }
+
         const totals = {};
         languages.forEach(l => { totals[l] = Object.values(stmtByBooth).reduce((s, b) => s + b[l], 0); });
         return { stmtByBooth, setsByLang, totals };
-      }, [selections]);
+      }, [selections, rotaData]);
 
       const count = Object.values(selections).flat().filter(Boolean).length;
 
       // Get emails of selected interpreters
       const getSelectedEmails = () => {
+        // Prefer everyone working ANY day of the current meeting's rota
+        if (rotaData && rotaData.interpreters && rotaData.interpreters.length) {
+          const emails = [];
+          const countedKeys = new Set();
+          rotaData.interpreters.forEach(interp => {
+            const worksAnyDay = Object.values(interp.marks).some(m => m.AM === '✓' || m.PM === '✓');
+            if (!worksAnyDay) return;
+            const key = interp.booth + '|' + interp.name;
+            if (countedKeys.has(key)) return;
+            countedKeys.add(key);
+            const full = getInterp(interp.booth, interp.name);
+            if (full?.email) emails.push(full.email);
+          });
+          return emails;
+        }
+        // No rota uploaded yet - fall back to today's manual selections
         const emails = [];
         Object.entries(selections).forEach(([booth, names]) => {
           names.forEach(name => {
