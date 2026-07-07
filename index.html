@@ -445,13 +445,28 @@
     const stripAccents = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     const tokenizeName = (s) => stripAccents(s).toLowerCase().split(/[\s.\-,']+/).filter(Boolean);
 
+    // Matching a LAST NAME token never allows a bare single-letter token to count -
+    // initials in the roster (e.g. the "N" in "N. O'Leary") represent a FIRST name,
+    // and must never be treated as a stand-in for someone else's LAST name.
+    const lastNameTokenMatches = (nt, lt) => {
+      if (nt === lt) return true;
+      return nt.length >= 3 && lt.length >= 3 && (nt.startsWith(lt) || lt.startsWith(nt));
+    };
+    // FIRST name tokens may legitimately be a bare initial (e.g. "H." for "Harry")
+    const firstNameTokenMatches = (nt, ft) => {
+      if (nt === ft) return true;
+      if (nt.length === 1) return ft.startsWith(nt);
+      if (ft.length === 1) return nt.startsWith(ft);
+      return nt.length >= 3 && ft.length >= 3 && (nt.startsWith(ft) || ft.startsWith(nt));
+    };
+
     const scoreMatch = (lastTokens, firstTokens, nameTokens) => {
       let score = 0;
       lastTokens.forEach(lt => {
-        if (nameTokens.some(nt => nt === lt || nt.startsWith(lt) || lt.startsWith(nt))) score += 2;
+        if (nameTokens.some(nt => lastNameTokenMatches(nt, lt))) score += 2;
       });
       firstTokens.forEach(ft => {
-        if (nameTokens.some(nt => nt === ft || nt.startsWith(ft) || ft.startsWith(nt))) score += 1;
+        if (nameTokens.some(nt => firstNameTokenMatches(nt, ft))) score += 1;
       });
       return score;
     };
