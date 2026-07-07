@@ -253,10 +253,9 @@
     function StatementsTable({ calc, meetingTitle, isFullscreen, onToggleFullscreen, onPrint }) {
       return (
         <div className={isFullscreen ? "print-area" : ""} style={{ background: '#fff', borderRadius: '10px', padding: isFullscreen ? '32px' : '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', width: '100%' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isFullscreen ? '4px' : '16px' }}>
             <div>
               <h3 style={{ margin: 0, color: imoBlue, fontSize: isFullscreen ? '1.4rem' : '1rem' }}>📄 Statements by Booth</h3>
-              {isFullscreen && <p style={{ margin: '4px 0 0', color: '#666', fontSize: '0.9rem' }}>{meetingTitle}</p>}
             </div>
             <div className="no-print" style={{ display: 'flex', gap: '4px' }}>
               <button className="icon-btn" onClick={onPrint} title="Print">
@@ -267,6 +266,9 @@
               </button>
             </div>
           </div>
+          {isFullscreen && (
+            <p style={{ textAlign: 'center', margin: '0 0 24px', color: imoBlue, fontSize: '2.2rem', fontWeight: '800', letterSpacing: '0.02em' }}>{meetingTitle}</p>
+          )}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: isFullscreen ? '1rem' : '0.8rem' }}>
               <thead>
