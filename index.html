@@ -43,7 +43,7 @@
     .header-btn-outline:disabled { color: #b9c8d6; border-color: #d8e3ec; cursor: not-allowed; background: #fff; }
     .meeting-input { padding: 10px 14px; border: 1.5px solid #ddd; border-radius: 6px; font-size: 1.25rem; font-weight: 700; color: #223; width: 240px; height: 44px; }
     .meeting-input:focus { outline: none; border-color: #5091CD; }
-    .pdf-modal-content { background: #fff; border-radius: 12px; padding: 16px; max-width: 900px; width: 95%; height: 88vh; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: flex; flex-direction: column; }
+    .pdf-modal-content { background: #fff; border-radius: 12px; padding: 16px; max-width: 1500px; width: 97%; height: 90vh; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: flex; flex-direction: column; }
     @media print {
       body * { visibility: hidden; }
       .print-area, .print-area * { visibility: visible; }
@@ -298,6 +298,62 @@
       );
     }
 
+    // Builds a standalone HTML document replicating the rota table, for the "open in new window" icon
+    function buildRotaHtmlDocument(rotaData) {
+      const { meetingCode, days, interpreters } = rotaData;
+      const byBooth = {};
+      boothOrder.forEach(b => { byBooth[b] = []; });
+      interpreters.forEach(i => { if (byBooth[i.booth]) byBooth[i.booth].push(i); });
+
+      const markColor = (mark) => {
+        if (mark === '✓') return 'color:#2e7d32;font-weight:700;';
+        if (mark === 'n/a') return 'color:#bbb;font-style:italic;font-size:0.85em;';
+        if (mark === '(Spare)') return 'color:#ef6c00;font-size:0.8em;';
+        return 'color:#ddd;';
+      };
+
+      let rowIndex = 0;
+      const rowsHtml = boothOrder.map(booth => byBooth[booth].map((interp, idx) => {
+        const bg = rowIndex % 2 === 0 ? '#ffffff' : '#f5f7fa';
+        rowIndex++;
+        const boothLabel = idx === 0
+          ? `<span style="display:block;font-size:0.65rem;font-weight:700;color:${boothColors[booth].bg};text-transform:uppercase;">${booth}</span>`
+          : '';
+        const cells = days.map(d => {
+          const mark = interp.marks[dayKey(d)] || { AM: '', PM: '' };
+          return `<td style="text-align:center;padding:6px 5px;border-bottom:1px solid #eee;border-left:1px solid #f0f0f0;${markColor(mark.AM)}">${mark.AM || '–'}</td>` +
+                 `<td style="text-align:center;padding:6px 5px;border-bottom:1px solid #eee;${markColor(mark.PM)}">${mark.PM || '–'}</td>`;
+        }).join('');
+        return `<tr style="background:${bg};"><td style="padding:6px 12px;border-right:1px solid #eee;border-bottom:1px solid #eee;white-space:nowrap;">${boothLabel}${interp.name}</td>${cells}</tr>`;
+      }).join('')).join('');
+
+      const headerDays = days.map(d => `<th colspan="2" style="padding:8px 4px;text-align:center;border-bottom:1px solid #eee;border-left:1px solid #f0f0f0;color:#666;">${d.name.slice(0,3)} ${String(d.day).padStart(2,'0')}</th>`).join('');
+      const headerSessions = days.map(() => `<th style="padding:4px 6px;font-size:0.7rem;color:#999;border-left:1px solid #f0f0f0;">AM</th><th style="padding:4px 6px;font-size:0.7rem;color:#999;">PM</th>`).join('');
+
+      return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Interpreters' Rota${meetingCode ? ' — ' + meetingCode : ''}</title>
+<style>body{font-family:'Segoe UI',system-ui,sans-serif;background:#f0f4f8;padding:24px;} table{border-collapse:collapse;width:100%;font-size:0.85rem;background:#fff;} th{position:sticky;top:0;background:#fafafa;}</style>
+</head><body>
+<h2 style="color:${imoBlue};margin:0 0 4px;">📄 Interpreters' Rota${meetingCode ? ' — ' + meetingCode : ''}</h2>
+<p style="color:#888;font-size:0.8rem;margin:0 0 16px;">Reconstructed from the uploaded rota PDF — not the original file, but the same schedule data.</p>
+<div style="overflow:auto;border:1px solid #eee;border-radius:8px;">
+<table>
+<thead><tr><th style="text-align:left;padding:8px 12px;border-bottom:2px solid #eee;border-right:1px solid #eee;min-width:150px;">Interpreter</th>${headerDays}</tr>
+<tr><th style="border-right:1px solid #eee;"></th>${headerSessions}</tr></thead>
+<tbody>${rowsHtml}</tbody>
+</table>
+</div>
+</body></html>`;
+    }
+
+    const OpenInNewIcon = () => (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <path d="M15 3h6v6"/>
+        <path d="M10 14L21 3"/>
+      </svg>
+    );
+
     function RotaTableModal({ rotaData, onClose }) {
       if (!rotaData) return null;
       const { meetingCode, days, interpreters } = rotaData;
@@ -312,53 +368,71 @@
         return { color: '#ddd' };
       };
 
+      const handleOpenInNewWindow = () => {
+        const html = buildRotaHtmlDocument(rotaData);
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      };
+
+      let rowIndex = -1;
+
       return (
         <div className="modal-overlay" onClick={onClose}>
           <div className="pdf-modal-content" onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h2 style={{ color: imoBlue, margin: 0, fontSize: '1.1rem' }}>📄 Interpreters' Rota {meetingCode ? `— ${meetingCode}` : ''}</h2>
-              <button className="close-btn" onClick={onClose}>Close</button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <button className="icon-btn" onClick={handleOpenInNewWindow} title="Open in new window">
+                  <OpenInNewIcon />
+                </button>
+                <button className="close-btn" onClick={onClose}>Close</button>
+              </div>
             </div>
             <p style={{ margin: '0 0 12px', color: '#888', fontSize: '0.75rem' }}>Reconstructed from the uploaded rota PDF — not the original file, but the same schedule data.</p>
             <div style={{ flex: 1, overflow: 'auto', border: '1px solid #eee', borderRadius: '8px' }}>
               <table style={{ borderCollapse: 'collapse', fontSize: '0.75rem', width: '100%' }}>
                 <thead>
                   <tr>
-                    <th style={{ position: 'sticky', left: 0, background: '#fafafa', padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #eee', borderRight: '1px solid #eee', minWidth: '140px' }}>Interpreter</th>
+                    <th style={{ position: 'sticky', left: 0, top: 0, background: '#fafafa', padding: '6px 10px', textAlign: 'left', borderBottom: '2px solid #eee', borderRight: '1px solid #eee', minWidth: '140px', zIndex: 2 }}>Interpreter</th>
                     {days.map(d => (
-                      <th key={dayKey(d)} colSpan={2} style={{ padding: '6px 4px', textAlign: 'center', borderBottom: '1px solid #eee', borderLeft: '1px solid #f0f0f0', color: '#666' }}>
+                      <th key={dayKey(d)} colSpan={2} style={{ position: 'sticky', top: 0, background: '#fafafa', padding: '6px 4px', textAlign: 'center', borderBottom: '1px solid #eee', borderLeft: '1px solid #f0f0f0', color: '#666', zIndex: 1 }}>
                         {d.name.slice(0,3)} {String(d.day).padStart(2,'0')}
                       </th>
                     ))}
                   </tr>
                   <tr>
-                    <th style={{ position: 'sticky', left: 0, background: '#fafafa', borderRight: '1px solid #eee' }}></th>
+                    <th style={{ position: 'sticky', left: 0, top: '29px', background: '#fafafa', borderRight: '1px solid #eee', zIndex: 2 }}></th>
                     {days.map(d => (
                       <React.Fragment key={dayKey(d)}>
-                        <th style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#999', borderLeft: '1px solid #f0f0f0' }}>AM</th>
-                        <th style={{ padding: '2px 6px', fontSize: '0.65rem', color: '#999' }}>PM</th>
+                        <th style={{ position: 'sticky', top: '29px', background: '#fafafa', padding: '2px 6px', fontSize: '0.65rem', color: '#999', borderLeft: '1px solid #f0f0f0', zIndex: 1 }}>AM</th>
+                        <th style={{ position: 'sticky', top: '29px', background: '#fafafa', padding: '2px 6px', fontSize: '0.65rem', color: '#999', zIndex: 1 }}>PM</th>
                       </React.Fragment>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {boothOrder.map(booth => byBooth[booth].map((interp, idx) => (
-                    <tr key={booth + interp.name}>
-                      <td style={{ position: 'sticky', left: 0, background: '#fff', padding: '5px 10px', borderRight: '1px solid #eee', borderBottom: '1px solid #f5f5f5', whiteSpace: 'nowrap' }}>
-                        {idx === 0 && <span style={{ display: 'block', fontSize: '0.65rem', fontWeight: '700', color: boothColors[booth].bg, textTransform: 'uppercase' }}>{booth}</span>}
-                        {interp.name}
-                      </td>
-                      {days.map(d => {
-                        const mark = interp.marks[dayKey(d)] || { AM: '', PM: '' };
-                        return (
-                          <React.Fragment key={dayKey(d)}>
-                            <td style={{ textAlign: 'center', padding: '5px 4px', borderBottom: '1px solid #f5f5f5', borderLeft: '1px solid #f8f8f8', ...markStyle(mark.AM) }}>{mark.AM || '–'}</td>
-                            <td style={{ textAlign: 'center', padding: '5px 4px', borderBottom: '1px solid #f5f5f5', ...markStyle(mark.PM) }}>{mark.PM || '–'}</td>
-                          </React.Fragment>
-                        );
-                      })}
-                    </tr>
-                  )))}
+                  {boothOrder.map(booth => byBooth[booth].map((interp, idx) => {
+                    rowIndex++;
+                    const rowBg = rowIndex % 2 === 0 ? '#ffffff' : '#f5f7fa';
+                    return (
+                      <tr key={booth + interp.name} style={{ background: rowBg }}>
+                        <td style={{ position: 'sticky', left: 0, background: rowBg, padding: '5px 10px', borderRight: '1px solid #eee', borderBottom: '1px solid #eee', whiteSpace: 'nowrap' }}>
+                          {idx === 0 && <span style={{ display: 'block', fontSize: '0.65rem', fontWeight: '700', color: boothColors[booth].bg, textTransform: 'uppercase' }}>{booth}</span>}
+                          {interp.name}
+                        </td>
+                        {days.map(d => {
+                          const mark = interp.marks[dayKey(d)] || { AM: '', PM: '' };
+                          return (
+                            <React.Fragment key={dayKey(d)}>
+                              <td style={{ textAlign: 'center', padding: '5px 4px', borderBottom: '1px solid #eee', borderLeft: '1px solid #f0f0f0', ...markStyle(mark.AM) }}>{mark.AM || '–'}</td>
+                              <td style={{ textAlign: 'center', padding: '5px 4px', borderBottom: '1px solid #eee', ...markStyle(mark.PM) }}>{mark.PM || '–'}</td>
+                            </React.Fragment>
+                          );
+                        })}
+                      </tr>
+                    );
+                  }))}
                 </tbody>
               </table>
             </div>
