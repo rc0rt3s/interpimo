@@ -346,6 +346,21 @@
       return bestScore >= 2 ? best : null;
     };
 
+    // Key used to compare/store which day a rota was last applied for, e.g. "7-July-2026"
+    const dayKey = (d) => d ? `${d.day}-${d.month}-${d.year}` : '';
+    const todayKey = () => {
+      const t = new Date();
+      return `${t.getDate()}-${t.toLocaleString('en-US', { month: 'long' })}-${t.getFullYear()}`;
+    };
+
+    // Reconstructs a File object from a stored base64 data URL (so a previously
+    // uploaded rota can be silently re-parsed, e.g. on a new day, without re-uploading)
+    async function dataUrlToFile(dataUrl, filename) {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      return new File([blob], filename || 'rota.pdf', { type: 'application/pdf' });
+    }
+
     // Parses the rota PDF using pdf.js. The PDF's grid is transposed: each INTERPRETER
     // is a column (identified by a rotated "LASTNAME, Firstname" label near the bottom
     // of the page), and each ROW is a specific Day+Session (AM/PM), with a checkmark
@@ -395,6 +410,8 @@
         const m = line.match(dayNameRegex);
         if (m) dayRows.push({ y: r.y, name: m[1], day: parseInt(m[2], 10), month: m[3], year: parseInt(m[4], 10) });
       });
+      // Attach a comparable Date (midnight) to each day for range/expiry checks
+      dayRows.forEach(d => { d.dateObj = new Date(`${d.month} ${d.day}, ${d.year} 00:00:00`); });
 
       // Session rows (each row has exactly one "AM" or "PM" label)
       const sessionRows = [];
@@ -415,38 +432,52 @@
         }
       });
 
-      // Determine which day to auto-select: match today's date, else default to the first day found
-      const today = new Date();
-      const todayMonthName = today.toLocaleString('en-US', { month: 'long' });
-      let selectedDay = dayRows.find(d => d.day === today.getDate() && d.month === todayMonthName && d.year === today.getFullYear());
-      if (!selectedDay) selectedDay = dayRows[dayRows.length - 1] || dayRows[0] || null;
-
-      // Build attendance: for each ✓ in a session row matching the selected day,
-      // find the nearest interpreter column and mark them as working
-      const workingKeys = new Set();
-      const workingRows = [];
-      sessionRows.forEach(sr => {
-        if (!selectedDay || !sr.day) return;
-        if (sr.day.day !== selectedDay.day || sr.day.month !== selectedDay.month || sr.day.year !== selectedDay.year) return;
-        sr.row.items.forEach(it => {
-          if (it.str.trim() !== '✓') return;
-          let nearestCol = null, best = Infinity;
-          nameColumns.forEach(nc => { const diff = Math.abs(nc.x - it.x); if (diff < best) { best = diff; nearestCol = nc; } });
-          if (nearestCol && best < 8) {
-            const key = nearestCol.lastName + '|' + nearestCol.firstName;
-            if (!workingKeys.has(key)) { workingKeys.add(key); workingRows.push(nearestCol); }
-          }
+      // Build attendance for one specific day: for each ✓ in a session row matching
+      // that day, find the nearest interpreter column and resolve it to a booth
+      const getWorkingNamesForDay = (day) => {
+        if (!day) return [];
+        const workingKeys = new Set();
+        const workingRows = [];
+        sessionRows.forEach(sr => {
+          if (!sr.day) return;
+          if (sr.day.day !== day.day || sr.day.month !== day.month || sr.day.year !== day.year) return;
+          sr.row.items.forEach(it => {
+            if (it.str.trim() !== '✓') return;
+            let nearestCol = null, best = Infinity;
+            nameColumns.forEach(nc => { const diff = Math.abs(nc.x - it.x); if (diff < best) { best = diff; nearestCol = nc; } });
+            if (nearestCol && best < 8) {
+              const key = nearestCol.lastName + '|' + nearestCol.firstName;
+              if (!workingKeys.has(key)) { workingKeys.add(key); workingRows.push(nearestCol); }
+            }
+          });
         });
-      });
+        const names = [];
+        workingRows.forEach(row => {
+          const match = findInterpreterMatch(row.lastName, row.firstName);
+          if (match) names.push(match);
+        });
+        return names;
+      };
 
-      // Match each working interpreter to a booth + roster name
-      const workingNames = [];
-      workingRows.forEach(row => {
-        const match = findInterpreterMatch(row.lastName, row.firstName);
-        if (match) workingNames.push(match);
-      });
+      // Determine key days: today's exact match, the earliest day (for a fresh
+      // upload ahead of the meeting), and the latest day (to detect expiry)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const todayMonthName = today.toLocaleString('en-US', { month: 'long' });
+      const todayMatch = dayRows.find(d => d.day === today.getDate() && d.month === todayMonthName && d.year === today.getFullYear()) || null;
+      const earliestDay = dayRows.reduce((min, d) => (!min || d.dateObj < min.dateObj) ? d : min, null);
+      const latestDay = dayRows.reduce((max, d) => (!max || d.dateObj > max.dateObj) ? d : max, null);
+      const isExpired = latestDay ? today.getTime() > latestDay.dateObj.getTime() : false;
 
-      return { meetingCode, selectedDay, workingNames };
+      return {
+        meetingCode,
+        todayMatch,
+        earliestDay,
+        latestDay,
+        isExpired,
+        workingNamesForToday: todayMatch ? getWorkingNamesForDay(todayMatch) : [],
+        workingNamesForEarliest: earliestDay ? getWorkingNamesForDay(earliestDay) : [],
+      };
     }
 
     function App() {
@@ -464,11 +495,26 @@
 
       useEffect(() => {
         loadData();
-        try {
-          const storedPdf = localStorage.getItem('rotaPdfDataUrl');
-          const storedName = localStorage.getItem('rotaPdfFileName');
-          if (storedPdf) { setPdfDataUrl(storedPdf); setPdfFileName(storedName || ''); }
-        } catch (err) { console.error('Could not load stored rota PDF:', err); }
+        (async () => {
+          try {
+            const storedPdf = localStorage.getItem('rotaPdfDataUrl');
+            const storedName = localStorage.getItem('rotaPdfFileName');
+            if (!storedPdf) return;
+            setPdfDataUrl(storedPdf);
+            setPdfFileName(storedName || '');
+
+            // If we've moved to a new day since this rota was last applied, silently
+            // re-parse it and refresh the selections/title for today - no re-upload needed.
+            const lastApplied = localStorage.getItem('rotaLastAppliedDay');
+            if (lastApplied === todayKey()) return;
+
+            const file = await dataUrlToFile(storedPdf, storedName);
+            const parseResult = await parseRotaPdf(file);
+            applyRotaResult(parseResult, { isManualUpload: false });
+          } catch (err) {
+            console.error('Could not auto-refresh stored rota PDF:', err);
+          }
+        })();
       }, []);
 
       const loadData = async () => {
@@ -540,6 +586,54 @@
 
       const getInterp = (booth, name) => interpretersData[booth]?.find(i => i.name === name);
 
+      // Applies a parseRotaPdf() result to selections + meeting title.
+      // - If the meeting's last day has passed, shows "NEW ROTA NEEDED" and clears selections.
+      // - If today falls within the rota, selects today's working interpreters.
+      // - Otherwise (rota uploaded ahead of the meeting), a manual upload defaults to
+      //   the meeting's first day; an automatic daily refresh leaves things untouched.
+      const applyRotaResult = (parseResult, { isManualUpload } = {}) => {
+        const { meetingCode, todayMatch, earliestDay, isExpired, workingNamesForToday, workingNamesForEarliest } = parseResult;
+
+        const fillSelections = (workingNames) => {
+          setSelections(prev => {
+            const n = {};
+            boothOrder.forEach(b => { n[b] = Array(SLOTS_PER_BOOTH).fill(null); });
+            const counters = {};
+            workingNames.forEach(({ booth, name }) => {
+              counters[booth] = counters[booth] || 0;
+              if (n[booth] && counters[booth] < SLOTS_PER_BOOTH && !n[booth].includes(name)) {
+                n[booth][counters[booth]] = name;
+                counters[booth]++;
+              }
+            });
+            return n;
+          });
+        };
+
+        if (isExpired) {
+          fillSelections([]);
+          setMeetingTitle('NEW ROTA NEEDED');
+          try { localStorage.setItem('rotaLastAppliedDay', todayKey()); } catch (err) {}
+          return { status: 'expired', count: 0 };
+        }
+
+        if (todayMatch) {
+          fillSelections(workingNamesForToday);
+          setMeetingTitle([meetingCode, todayMatch.name.toUpperCase()].filter(Boolean).join(' · '));
+          try { localStorage.setItem('rotaLastAppliedDay', dayKey(todayMatch)); } catch (err) {}
+          return { status: 'applied', count: workingNamesForToday.length };
+        }
+
+        if (isManualUpload && earliestDay) {
+          fillSelections(workingNamesForEarliest);
+          setMeetingTitle([meetingCode, earliestDay.name.toUpperCase()].filter(Boolean).join(' · '));
+          try { localStorage.setItem('rotaLastAppliedDay', dayKey(earliestDay)); } catch (err) {}
+          return { status: 'applied', count: workingNamesForEarliest.length };
+        }
+
+        return { status: 'no-change', count: 0 };
+      };
+
       const handleRotaUpload = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -562,29 +656,13 @@
           }
 
           // Parse the PDF to auto-select interpreters
-          const { meetingCode, selectedDay, workingNames } = await parseRotaPdf(file);
+          const parseResult = await parseRotaPdf(file);
+          const { status, count } = applyRotaResult(parseResult, { isManualUpload: true });
 
-          setSelections(prev => {
-            const n = {};
-            boothOrder.forEach(b => { n[b] = Array(SLOTS_PER_BOOTH).fill(null); });
-            const counters = {};
-            workingNames.forEach(({ booth, name }) => {
-              counters[booth] = counters[booth] || 0;
-              if (n[booth] && counters[booth] < SLOTS_PER_BOOTH && !n[booth].includes(name)) {
-                n[booth][counters[booth]] = name;
-                counters[booth]++;
-              }
-            });
-            return n;
-          });
-
-          if (meetingCode || selectedDay) {
-            const dayLabel = selectedDay ? selectedDay.name.toUpperCase() : '';
-            setMeetingTitle([meetingCode, dayLabel].filter(Boolean).join(' · '));
-          }
-
-          if (!workingNames.length) {
-            alert('The rota was uploaded, but no matching interpreters could be automatically detected for today. You can still select interpreters manually.');
+          if (status === 'expired') {
+            alert('This rota\'s last day has already passed. The meeting title now shows "NEW ROTA NEEDED" until a current rota is uploaded.');
+          } else if (!count) {
+            alert('The rota was uploaded, but no matching interpreters could be automatically detected. You can still select interpreters manually.');
           }
         } catch (err) {
           console.error('Rota parsing error:', err);
