@@ -825,6 +825,11 @@
               }
             }
           });
+          // The Chinese booth only needs ONE combined statement per language,
+          // regardless of how many Chinese interpreters could cover it.
+          if (booth === 'Chinese') {
+            languages.forEach(l => { stmtByBooth[booth][l] = Math.min(stmtByBooth[booth][l], 1); });
+          }
         });
 
         // Sets Required reflects EVERY interpreter working anywhere in the whole
