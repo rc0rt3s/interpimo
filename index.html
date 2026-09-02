@@ -636,7 +636,6 @@
       const [showEmailModal, setShowEmailModal] = useState(false);
       const [rotaData, setRotaData] = useState(null);
       const [rotaAppliedDayKey, setRotaAppliedDayKey] = useState('');
-      const [showPdfModal, setShowPdfModal] = useState(false);
       const [isParsingRota, setIsParsingRota] = useState(false);
       const fileInputRef = React.useRef(null);
 
@@ -944,9 +943,6 @@
               <button className="header-btn-outline" onClick={() => fileInputRef.current?.click()} disabled={isParsingRota}>
                 {isParsingRota ? '⟳ Parsing...' : '📤 Upload ROTA'}
               </button>
-              <button className="header-btn-outline" onClick={() => setShowPdfModal(true)} disabled={!rotaData}>
-                📄 See pdf ROTA
-              </button>
             </div>
 
             {/* Right section: Sync status + Refresh */}
@@ -1004,11 +1000,6 @@
           {/* Email Modal */}
           {showEmailModal && (
             <EmailModal emails={getSelectedEmails()} onClose={() => setShowEmailModal(false)} />
-          )}
-
-          {/* Pdf Rota Modal */}
-          {showPdfModal && rotaData && (
-            <RotaTableModal rotaData={rotaData} onClose={() => setShowPdfModal(false)} />
           )}
         </div>
       );
