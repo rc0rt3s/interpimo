@@ -809,6 +809,29 @@
         }
       };
 
+      // Everyone working ANY day of the current meeting's rota, deduplicated by booth+name.
+      // Returns [] when there is no rota, when no interpreter is marked as working,
+      // or when the rota's last day has already passed - a finished rota must not keep
+      // overriding manual selections in "Sets Required" and the email list.
+      const rotaMeetingWide = useMemo(() => {
+        if (!rotaData || !rotaData.interpreters || !rotaData.interpreters.length) return [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        if (rotaIsExpired(rotaData, today)) return [];
+        const out = [];
+        const countedKeys = new Set();
+        rotaData.interpreters.forEach(ri => {
+          const worksAnyDay = Object.values(ri.marks).some(m => m.AM === '✓' || m.PM === '✓');
+          if (!worksAnyDay) return;
+          const key = ri.booth + '|' + ri.name;
+          if (countedKeys.has(key)) return;
+          countedKeys.add(key);
+          const full = getInterp(ri.booth, ri.name);
+          if (full) out.push(full);
+        });
+        return out;
+      }, [rotaData]);
+
       const calc = useMemo(() => {
         const stmtByBooth = {};
         const setsByLang = { English: 0, French: 0, Spanish: 0 };
@@ -833,21 +856,13 @@
 
         // Sets Required reflects EVERY interpreter working anywhere in the whole
         // meeting (across all days in the rota), not just today's booth selections.
-        if (rotaData && rotaData.interpreters && rotaData.interpreters.length) {
-          const countedKeys = new Set();
-          rotaData.interpreters.forEach(interp => {
-            const worksAnyDay = Object.values(interp.marks).some(m => m.AM === '✓' || m.PM === '✓');
-            if (!worksAnyDay) return;
-            const key = interp.booth + '|' + interp.name;
-            if (countedKeys.has(key)) return;
-            countedKeys.add(key);
-            const full = getInterp(interp.booth, interp.name);
-            if (full) {
-              setLanguages.forEach(l => { if (full.sets?.toLowerCase().includes(l.toLowerCase())) setsByLang[l]++; });
-            }
+        // If there is no usable rota, fall back to today's manual selections.
+        if (rotaMeetingWide.length) {
+          rotaMeetingWide.forEach(full => {
+            setLanguages.forEach(l => { if (full.sets?.toLowerCase().includes(l.toLowerCase())) setsByLang[l]++; });
           });
         } else {
-          // No rota uploaded yet - fall back to today's selections
+          // No usable rota - fall back to today's selections
           boothOrder.forEach(booth => {
             selections[booth]?.forEach(name => {
               if (name) {
@@ -861,28 +876,16 @@
         const totals = {};
         languages.forEach(l => { totals[l] = Object.values(stmtByBooth).reduce((s, b) => s + b[l], 0); });
         return { stmtByBooth, setsByLang, totals };
-      }, [selections, rotaData]);
+      }, [selections, rotaMeetingWide]);
 
       const count = Object.values(selections).flat().filter(Boolean).length;
 
       // Get emails of selected interpreters
       const getSelectedEmails = () => {
         // Prefer everyone working ANY day of the current meeting's rota
-        if (rotaData && rotaData.interpreters && rotaData.interpreters.length) {
-          const emails = [];
-          const countedKeys = new Set();
-          rotaData.interpreters.forEach(interp => {
-            const worksAnyDay = Object.values(interp.marks).some(m => m.AM === '✓' || m.PM === '✓');
-            if (!worksAnyDay) return;
-            const key = interp.booth + '|' + interp.name;
-            if (countedKeys.has(key)) return;
-            countedKeys.add(key);
-            const full = getInterp(interp.booth, interp.name);
-            if (full?.email) emails.push(full.email);
-          });
-          return emails;
-        }
-        // No rota uploaded yet - fall back to today's manual selections
+        const rotaEmails = rotaMeetingWide.map(i => i.email).filter(Boolean);
+        if (rotaEmails.length) return rotaEmails;
+        // No usable rota (none uploaded, or the meeting has finished) - use manual selections
         const emails = [];
         Object.entries(selections).forEach(([booth, names]) => {
           names.forEach(name => {
